@@ -1,120 +1,37 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Thermometer, Droplets, Wind } from 'lucide-react';
 
-// Configuration Netatmo
-const CONFIG = {
-  clientId: '675b634cde9686cb5c026d30',
-  clientSecret: 'DPTngdKSgCJXTRLxhrYTuFK0bFtEw',
-  redirectUri: 'https://votredomaine.com/callback', // Remplacez par votre domaine PlanetHoster
-  scope: 'read_homecoach read_station',
-  authUrl: 'https://api.netatmo.com/oauth2/authorize',
-  tokenUrl: 'https://api.netatmo.com/oauth2/token',
-  apiUrl: 'https://api.netatmo.com/api'
-};
-
 const NetatmoDashboard = () => {
   const [sensors, setSensors] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-
-  // Fonctions d'authentification
-  const getAuthUrl = () => {
-    const params = new URLSearchParams({
-      client_id: CONFIG.clientId,
-      redirect_uri: CONFIG.redirectUri,
-      scope: CONFIG.scope,
-      response_type: 'code',
-    });
-    return `${CONFIG.authUrl}?${params.toString()}`;
-  };
-
-  const refreshToken = async () => {
-    const refreshToken = localStorage.getItem('netatmo_refresh_token');
-    if (!refreshToken) {
-      throw new Error('Pas de refresh token disponible');
-    }
-
-    const response = await fetch(CONFIG.tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: CONFIG.clientId,
-        client_secret: CONFIG.clientSecret,
-        refresh_token: refreshToken,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Erreur lors du rafraîchissement du token');
-    }
-
-    const data = await response.json();
-    localStorage.setItem('netatmo_token', data.access_token);
-    localStorage.setItem('netatmo_refresh_token', data.refresh_token);
-    localStorage.setItem('netatmo_token_expiry', Date.now() + (data.expires_in * 1000));
-    return data;
-  };
-
-  const checkToken = async () => {
-    const token = localStorage.getItem('netatmo_token');
-    const expiry = localStorage.getItem('netatmo_token_expiry');
-
-    if (!token || !expiry) {
-      return false;
-    }
-
-    if (Date.now() >= parseInt(expiry)) {
-      try {
-        await refreshToken();
-        return true;
-      } catch (error) {
-        return false;
-      }
-    }
-
-    return true;
-  };
-
-  // Fonction de récupération des données
-  const getStationData = async () => {
-    const token = localStorage.getItem('netatmo_token');
-    if (!token) {
-      throw new Error('Non authentifié');
-    }
-
-    const response = await fetch(`${CONFIG.apiUrl}/getstationsdata`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error('Erreur lors de la récupération des données');
-    }
-
-    return await response.json();
-  };
-
-  const formatStationData = (data) => {
-    return data.body.devices.map(device => ({
-      id: device._id,
-      name: device.module_name,
-      temperature: device.dashboard_data.Temperature,
-      humidity: device.dashboard_data.Humidity,
-      co2: device.dashboard_data.CO2,
-      lastUpdate: new Date(device.last_status_store * 1000).toISOString()
-    }));
-  };
-
-  const loadStationData = async () => {
+  
+  const fetchData = async () => {
     try {
-      const data = await getStationData();
-      const formattedData = formatStationData(data);
+      const response = await fetch('https://api.netatmo.com/api/getstationsdata', {
+        headers: {
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_NETATMO_TOKEN || '642fc4b57909449dc9033396|663e79f9126016d86c60a240e814b41a'}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de la récupération des données');
+      }
+
+      const data = await response.json();
+      const formattedData = data.body.devices.map(device => ({
+        id: device._id,
+        name: device.module_name,
+        temperature: device.dashboard_data.Temperature,
+        humidity: device.dashboard_data.Humidity,
+        co2: device.dashboard_data.CO2,
+        lastUpdate: new Date(device.last_status_store * 1000).toISOString()
+      }));
+
       setSensors(formattedData);
       setIsLoading(false);
     } catch (err) {
@@ -123,23 +40,11 @@ const NetatmoDashboard = () => {
     }
   };
 
-  const checkAuthAndLoadData = async () => {
-    try {
-      const isAuthenticated = await checkToken();
-      if (!isAuthenticated) {
-        window.location.href = getAuthUrl();
-        return;
-      }
-
-      await loadStationData();
-    } catch (err) {
-      setError('Erreur d\'authentification');
-      setIsLoading(false);
-    }
-  };
-
   useEffect(() => {
-    checkAuthAndLoadData();
+    fetchData();
+    // Rafraîchir les données toutes les 5 minutes
+    const interval = setInterval(fetchData, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const getTemperatureColor = (temp) => {
@@ -165,7 +70,7 @@ const NetatmoDashboard = () => {
       <div className="p-4">
         <p className="text-red-500">{error}</p>
         <Button 
-          onClick={checkAuthAndLoadData}
+          onClick={fetchData}
           className="mt-4"
         >
           Réessayer
@@ -178,7 +83,7 @@ const NetatmoDashboard = () => {
     <div className="p-4 max-w-6xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Températures Intérieures</h1>
-        <Button onClick={loadStationData}>Actualiser</Button>
+        <Button onClick={fetchData}>Actualiser</Button>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
